@@ -1,4 +1,4 @@
-﻿function Get-NetworkStatistics {
+function Get-NetworkStatistics {
     <#
     .SYNOPSIS
 	    Display current TCP/IP connections for local or remote system
@@ -95,19 +95,27 @@
 	[CmdletBinding()]
 	param(
 		
-		[Parameter(Position=0)]
-		[System.String]$ProcessName='*',
-		
-		[Parameter(Position=1)]
-		[System.String]$Address='*',		
-		
-		[Parameter(Position=2)]
-		$Port='*',
-
-		[Parameter(Position=3,
+		[Parameter(Position=1,
                    ValueFromPipeline = $True,
                    ValueFromPipelineByPropertyName = $True)]
-        [System.String[]]$ComputerName=$env:COMPUTERNAME,
+        [System.String[]]$ComputerName,
+
+        [Parameter(
+            Position=2,
+            ValueFromPipeline=$True,
+            ValueFromPipelineByPropertyName = $True)]
+        [Alias("RunAs")]
+		[System.Management.Automation.Credential()]
+		$Credential = [System.Management.Automation.PSCredential]::Empty,
+
+		[Parameter(Position=3)]
+		[System.String]$ProcessName='*',
+		
+		[Parameter(Position=4)]
+		[System.String]$Address='*',		
+		
+		[Parameter(Position=5)]
+		$Port='*',
 
 		[ValidateSet('*','tcp','udp')]
 		[System.String]$Protocol='*',
@@ -160,7 +168,14 @@
 
                     #delete previous results
                         Try{
-                            $null = Invoke-WmiMethod -class Win32_process -name Create -ArgumentList "cmd /c del $tempFile" -ComputerName $Computer -ErrorAction stop
+                            if ($credential)
+                            {
+                                $null = Invoke-WmiMethod -class Win32_process -name Create -ArgumentList "cmd /c del $tempFile" -ComputerName $Computer -Credential $Credential -ErrorAction stop
+                            }
+                            else
+                            {
+                                $null = Invoke-WmiMethod -class Win32_process -name Create -ArgumentList "cmd /c del $tempFile" -ComputerName $Computer -ErrorAction stop
+                            }
                         }
                         Catch{
                             Write-Warning "Could not invoke create win32_process on $Computer to delete $tempfile"
@@ -168,7 +183,14 @@
 
                     #run command
                         Try{
-                            $processID = (Invoke-WmiMethod -class Win32_process -name Create -ArgumentList $cmd -ComputerName $Computer -ErrorAction stop).processid
+                            if ($Credential)
+                            {
+                                $processID = (Invoke-WmiMethod -class Win32_process -name Create -ArgumentList $cmd -ComputerName $Computer -Credential $Credential -ErrorAction stop).processid
+                            }
+                            else
+                            {
+                                $processID = (Invoke-WmiMethod -class Win32_process -name Create -ArgumentList $cmd -ComputerName $Computer -ErrorAction stop).processid
+                            }
                         }
                         Catch{
                             #If we didn't run netstat, break everything off
@@ -192,22 +214,46 @@
                         }
             
                     #gather results
-                        if(test-path $remoteTempFile){
-                    
-                            Try {
-                                $results = Get-Content $remoteTempFile | Select-String -Pattern '\s+(TCP|UDP)'
+                        if ($credential)
+                        {
+                            $remoteTempFilePath = "\\{0}\{1}`$" -f "$Computer", (split-path $tempFile -qualifier).TrimEnd(":")
+                            if(New-PSDrive -Name testNetstat -PSProvider FileSystem -Root $remoteTempFilePath -Credential $Credential){                
+                                Try {
+                                    
+                                    $results = Get-Content -Path testNetstat:\netstat.txt | Select-String -Pattern '\s+(TCP|UDP)'                                   
+                                }
+                                Catch {
+                                    Throw "Could not get content from $remoteTempFile for results"
+                                    Break
+                                }
+
+                                Remove-Item testNetstat:\netstat.txt -force 
+                                Remove-PSDrive testNetstat
                             }
-                            Catch {
-                                Throw "Could not get content from $remoteTempFile for results"
+                            else{
+                                Throw "'$tempFile' on $Computer converted to '$remoteTempFile'.  This path is not accessible from your system."
                                 Break
                             }
-
-                            Remove-Item $remoteTempFile -force
-
                         }
-                        else{
-                            Throw "'$tempFile' on $Computer converted to '$remoteTempFile'.  This path is not accessible from your system."
-                            Break
+                        else
+                        {
+                            if(test-path $remoteTempFile){
+                    
+                                Try {
+                                    $results = Get-Content $remoteTempFile | Select-String -Pattern '\s+(TCP|UDP)'
+                                }
+                                Catch {
+                                    Throw "Could not get content from $remoteTempFile for results"
+                                    Break
+                                }
+
+                                Remove-Item $remoteTempFile -force
+
+                            }
+                            else{
+                                Throw "'$tempFile' on $Computer converted to '$remoteTempFile'.  This path is not accessible from your system."
+                                Break
+                            }
                         }
                 }
                 else{
@@ -378,3 +424,4 @@
         }
     }
 }
+
